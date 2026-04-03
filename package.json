@@ -1,0 +1,16 @@
+{
+  "name": "codebridge-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server that bridges any agent to coding CLIs (cursor-agent, opencode) via synchronous spawn-and-wait.",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  }
+}
