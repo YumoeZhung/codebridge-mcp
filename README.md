@@ -62,6 +62,46 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
 
 如果 `CURSOR_AGENT_BIN` 或 `OPENCODE_BIN` 不在 PATH 中，将值改为绝对路径，例如 `/usr/local/bin/cursor-agent`。
 
+### DeskClaw (nanobot)
+
+读取 `~/.deskclaw/nanobot/config.json`，在 `tools.mcp_servers` 对象中添加 `codebridge` 条目。不要覆盖已有的其他 server 条目。
+
+需要添加的配置：
+
+```json
+{
+  "codebridge": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["/path/to/codebridge-mcp/src/server.js"],
+    "env": {
+      "CURSOR_AGENT_BIN": "cursor-agent",
+      "OPENCODE_BIN": "opencode"
+    },
+    "tool_timeout": 660,
+    "enabled_tools": ["*"]
+  }
+}
+```
+
+操作步骤（面向 Agent 的精确指令）：
+
+1. 读取 `~/.deskclaw/nanobot/config.json`
+2. 解析 JSON，定位 `tools.mcp_servers` 字段（不存在则创建 `tools`，再在其中创建 `mcp_servers`）
+3. 在 `tools.mcp_servers` 下添加上面的 `codebridge` 条目
+4. 将 `args` 中的路径改为本机 codebridge-mcp 实际安装路径
+5. 如果 `cursor-agent` 或 `opencode` 不在 PATH 中，将 `env` 中的值改为绝对路径
+6. 写回文件（保持其他字段不变）
+7. 重启 DeskClaw 让配置生效
+
+与 OpenClaw 的关键差异：
+- 配置路径：`~/.deskclaw/nanobot/config.json`（不是 `openclaw.json`）
+- MCP 挂载点：`tools.mcp_servers`（不是 `mcp.servers`）
+- 必须指定 `"type": "stdio"`（OpenClaw 自动推断，nanobot 要求显式声明）
+- 支持 `tool_timeout`（秒）和 `enabled_tools`（`["*"]` 表示暴露全部工具）
+
+注意：nanobot 是单 agent 架构，没有 subAgent。调用 `run_code_agent` 或 `run_code_loop` 时 agent 会被阻塞，期间无法处理其他消息。对于"晚上自主编码"等不需要交互的场景这是可以接受的。
+
 ### Cursor / Claude Desktop / 其他 MCP 客户端
 
 在对应的 MCP 配置文件中添加：
@@ -71,7 +111,7 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
   "mcpServers": {
     "codebridge": {
       "command": "node",
-      "args": ["/Users/nodeskai/projects/codebridge-mcp/src/server.js"],
+      "args": ["/path/to/codebridge-mcp/src/server.js"],
       "env": {
         "CURSOR_AGENT_BIN": "cursor-agent",
         "OPENCODE_BIN": "opencode"

@@ -14,26 +14,48 @@ cd ~/projects/codebridge-mcp
 npm install
 ```
 
-## 接入 OpenClaw
+详细的安装和接入指南见 [README.md](README.md)。
 
-在 `~/.openclaw/openclaw.json` 的 `mcp.servers` 下添加:
+## 接入
+
+### OpenClaw
+
+在 `~/.openclaw/openclaw.json` 的 `mcp.servers` 下添加 `codebridge` 条目：
 
 ```json
 {
-  "mcp": {
-    "servers": {
-      "codebridge": {
-        "command": "node",
-        "args": ["/Users/nodeskai/projects/codebridge-mcp/src/server.js"],
-        "env": {
-          "CURSOR_AGENT_BIN": "cursor-agent",
-          "OPENCODE_BIN": "opencode"
-        }
-      }
+  "codebridge": {
+    "command": "node",
+    "args": ["/path/to/codebridge-mcp/src/server.js"],
+    "env": {
+      "CURSOR_AGENT_BIN": "cursor-agent",
+      "OPENCODE_BIN": "opencode"
     }
   }
 }
 ```
+
+### DeskClaw (nanobot)
+
+在 `~/.deskclaw/nanobot/config.json` 的 `tools.mcp_servers` 下添加 `codebridge` 条目：
+
+```json
+{
+  "codebridge": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["/path/to/codebridge-mcp/src/server.js"],
+    "env": {
+      "CURSOR_AGENT_BIN": "cursor-agent",
+      "OPENCODE_BIN": "opencode"
+    },
+    "tool_timeout": 660,
+    "enabled_tools": ["*"]
+  }
+}
+```
+
+nanobot 与 OpenClaw 的差异：必须指定 `"type": "stdio"`；建议 `tool_timeout` 设为 660（略大于默认的 600s 任务超时）。
 
 ## 可用工具
 
@@ -119,7 +141,9 @@ run_code_loop(goal: "重构 auth 模块，拆分为独立服务", max_turns: 5)
 2. 分析 plan 拆解为独立子任务
 3. 每个子任务用 `run_code_loop` 执行
 
-## 与 OpenClaw SubAgent 配合
+## 平台特定用法
+
+### OpenClaw（有 subAgent）
 
 将编码循环放入 subAgent，主 agent 保持响应:
 
@@ -129,6 +153,22 @@ run_code_loop(goal: "重构 auth 模块，拆分为独立服务", max_turns: 5)
 4. 主 agent 通知人类
 
 关键: subAgent 的 `runTimeoutSeconds` 必须 >= 编码循环总时长（建议 3600+）。
+
+### DeskClaw / nanobot（单 agent）
+
+nanobot 没有 subAgent 机制，调用 `run_code_agent` 或 `run_code_loop` 时 agent 会被阻塞。
+
+适合的场景：
+- 用户明确下达编码任务后不需要交互（如"晚上睡觉前让你做完"）
+- 使用 `run_code_loop` 一次性完成，减少 LLM 轮次
+
+推荐工作流：
+
+1. 用户下达目标
+2. Agent 调用 `run_code_loop(goal: "...", max_turns: 8)` — agent 全程阻塞
+3. loop 结束后 agent 恢复，向用户报告结果
+
+如果任务复杂需要中途调整，用模式 1（手动循环），每轮之间 agent 可以分析结果并决定下一步，但每轮期间仍然阻塞。
 
 ## 环境变量
 
