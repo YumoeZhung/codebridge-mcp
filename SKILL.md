@@ -1,204 +1,216 @@
 ---
-name: codebridge-mcp
-description: MCP server that lets any agent synchronously invoke coding CLIs (cursor-agent, opencode). Provides check_auth, run_code_agent (single turn) and run_code_loop (autonomous multi-turn) tools.
+name: codebridge
+description: Drive coding CLIs (cursor-agent, opencode) from any agent with shell access. Use when the task requires invoking a separate coding agent to write, fix, refactor, or analyze code in a project workspace. Triggers on requests involving cursor-agent, opencode, code agent delegation, autonomous coding loops, or multi-turn coding workflows.
 ---
 
-# CodeBridge MCP
+# CodeBridge
 
-通过 MCP 协议同步调用 coding CLI（cursor-agent、opencode）。进程退出即返回结果，无需 heartbeat 或轮询。
+Drive cursor-agent and opencode from any agent with shell access. No MCP server, no extra dependencies — just CLI invocations.
 
-## 安装
+## Authentication (read before first use)
+
+### cursor-agent
+
+Requires `CURSOR_API_KEY`. No browser login needed.
+
+Verify authentication:
 
 ```bash
-cd ~/projects/codebridge-mcp
-npm install
+CURSOR_API_KEY=key_xxx cursor-agent --list-models
 ```
 
-详细的安装和接入指南见 [README.md](README.md)。
+If `CURSOR_API_KEY` is not available in your environment, ask the user to provide one. The user can obtain it from Cursor Settings > API Keys, or by running `cursor-agent login` on a machine with a browser and then checking `cursor-agent status`.
 
-## 认证（首次使用前必读）
+Once you have the key, pass it via environment variable or `--api-key` flag on every invocation.
 
-cursor-agent 需要认证才能使用。**不需要浏览器登录**，通过 API Key 即可。
+### opencode
 
-### 认证流程（Agent 必须遵循）
+Uses its own auth system. Verify with:
 
-1. **首次调用任何工具前**，先调用 `check_auth({ provider: "cursor" })`
-2. 如果返回 `authenticated: false`：
-   - 检查 MCP 配置中是否设置了 `CURSOR_API_KEY` 环境变量
-   - 如果没有，**向用户索要** Cursor API Key
-   - 用户可以从 Cursor Settings > API Keys 获取，或运行 `cursor-agent login` 后查看
-   - 拿到 key 后，将其写入 MCP 配置的 `env.CURSOR_API_KEY` 字段
-   - 提示用户重启 agent 以加载新配置
-3. 如果返回 `authenticated: true`，可以正常调用 `run_code_agent` / `run_code_loop`
+```bash
+opencode models
+```
 
-### 配置示例（带 API Key）
+If not authenticated, run `opencode auth` and follow the prompts (requires user interaction).
 
-OpenClaw (`~/.openclaw/openclaw.json` → `mcp.servers`):
+## CLI Command Reference
+
+### cursor-agent: non-interactive mode
+
+Single-turn execution — run a prompt, block until the agent finishes, read stdout:
+
+```bash
+CURSOR_API_KEY=key_xxx cursor-agent \
+  -p \
+  --force \
+  --trust \
+  --workspace /path/to/project \
+  "your prompt here"
+```
+
+Flag breakdown:
+- `-p` (print mode): non-interactive, outputs to stdout, exits when done
+- `--force`: auto-approve tool calls (file writes, shell commands)
+- `--trust`: skip workspace trust prompt in headless mode
+- `--workspace <path>`: target project directory
+
+Optional flags:
+- `--model <model>`: override default model (e.g. `sonnet-4-thinking`, `gpt-5`)
+- `--output-format text|json|stream-json`: output format (default: `text`)
+- `--mode plan`: read-only planning mode (no file edits)
+- `--mode ask`: Q&A mode (no file edits)
+- `-w, --worktree [name]`: run in an isolated git worktree
+
+### cursor-agent: session management
+
+Create a new chat session:
+
+```bash
+CURSOR_API_KEY=key_xxx cursor-agent create-chat
+# outputs a chat UUID
+```
+
+Resume a session (preserves full conversation context):
+
+```bash
+CURSOR_API_KEY=key_xxx cursor-agent \
+  -p --force --trust \
+  --resume <chatId> \
+  "continue with the next step"
+```
+
+Continue the most recent session:
+
+```bash
+CURSOR_API_KEY=key_xxx cursor-agent \
+  -p --force --trust \
+  --continue \
+  "fix the test failures from last round"
+```
+
+### opencode: non-interactive mode
+
+```bash
+opencode run \
+  --dir /path/to/project \
+  "your prompt here"
+```
+
+Optional flags:
+- `-m, --model provider/model`: specify model (e.g. `anthropic/sonnet-4`)
+- `-s, --session <id>`: resume a specific session
+- `-c, --continue`: continue the most recent session
+- `-f, --file <path>`: attach file(s) for context
+- `--agent <name>`: use a specific agent profile
+- `--format json`: output raw JSON events instead of formatted text
+
+## Usage Patterns
+
+### Pattern 1: SubAgent sync loop (OpenClaw / DeskClaw)
+
+Recommended when the agent must stay responsive to the user while coding runs in the background.
+
+The main agent spawns a subAgent to handle the coding loop. The subAgent calls cursor-agent synchronously — each invocation blocks until cursor-agent exits, then the subAgent analyzes the result and decides the next step. The main agent is free to handle messages.
+
+**OpenClaw:**
+
+```
+sessions_spawn({
+  task: "Use cursor-agent to implement user registration for /path/to/project. \
+    Run cursor-agent -p with CURSOR_API_KEY=<key>. After each round, review \
+    the result and decide next steps. Send a Feishu notification after each round. \
+    When all steps are complete, summarize what was done.",
+  runTimeoutSeconds: 3600
+})
+```
+
+**DeskClaw (nanobot):**
+
+Same `sessions_spawn` call. Ensure `agents.defaults.subagents` config allows sufficient timeout:
 
 ```json
 {
-  "codebridge": {
-    "command": "node",
-    "args": ["/path/to/codebridge-mcp/src/server.js"],
-    "env": {
-      "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
-      "CURSOR_AGENT_BIN": "cursor-agent",
-      "OPENCODE_BIN": "opencode"
+  "agents": {
+    "defaults": {
+      "subagents": {
+        "runTimeoutSeconds": 3600,
+        "maxSpawnDepth": 1
+      }
     }
   }
 }
 ```
 
-DeskClaw (`~/.deskclaw/nanobot/config.json` → `tools.mcp_servers`):
-
-```json
-{
-  "codebridge": {
-    "type": "stdio",
-    "command": "node",
-    "args": ["/path/to/codebridge-mcp/src/server.js"],
-    "env": {
-      "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
-      "CURSOR_AGENT_BIN": "cursor-agent",
-      "OPENCODE_BIN": "opencode"
-    },
-    "tool_timeout": 660,
-    "enabled_tools": ["*"]
-  }
-}
-```
-
-## 可用工具
-
-### `check_auth` — 认证检查
-
-在调用 run_code_agent / run_code_loop 之前**必须**先调用此工具。
+**SubAgent internal loop (pseudocode):**
 
 ```
-check_auth({ provider: "cursor" })
+chatId = exec("cursor-agent create-chat")
+
+while task not complete:
+    result = exec("cursor-agent -p --force --trust --resume <chatId> '<next prompt>'")
+    analyze result
+    send progress notification
+    if done: break
+    formulate next prompt
+
+announce final summary to parent agent
 ```
 
-返回 `{ authenticated: true, models: "..." }` 或 `{ authenticated: false, error: "..." }`。
-error 中会包含修复指引，Agent 应按指引操作。
+The key advantage: each `exec` call is synchronous. No heartbeat, no event routing, no background process management. Process exit = result available.
 
-### `run_code_agent` — 单轮同步执行
+### Pattern 2: Direct execution (Cursor / single-agent)
 
-跑一轮 coding agent，阻塞直到 CLI 进程退出。
+When the agent itself has shell access and doesn't need to stay responsive during coding:
 
-```
-run_code_agent({
-  provider: "cursor",           // "cursor" 或 "opencode"
-  prompt: "fix the bug in auth.py",
-  workspace: "/path/to/project",
-  session_id: "abc123",         // 可选，续接已有会话
-  model: "claude-sonnet",       // 可选，覆盖默认模型
-  timeout_seconds: 600          // 可选，默认 600
-})
+```bash
+cursor-agent -p --force --trust --workspace /path/to/project "implement the feature"
 ```
 
-返回:
+Read the stdout output, analyze it, decide whether to run another round. The agent controls the loop directly.
 
-```json
-{
-  "output": "agent 的完整文本输出",
-  "session_id": "用于下次续接的 ID",
-  "exit_code": 0,
-  "duration_ms": 12345,
-  "diff": {
-    "summary": "本轮代码改动摘要",
-    "changed_files": ["src/auth.py"],
-    "branch": "main",
-    "head_before": "abc1234",
-    "head_after": "def5678"
-  }
-}
-```
+### Pattern 3: Human-guided loop
 
-### `run_code_loop` — 自主多轮循环
-
-发送高层目标，自动多轮执行直到 agent 报告 TASK_COMPLETE 或达到最大轮次。
+Each round completes, the agent reports results to the human, waits for the next instruction before continuing. Suitable for tasks requiring human review between steps.
 
 ```
-run_code_loop({
-  provider: "opencode",
-  goal: "实现用户注册功能，包括表单验证和数据库迁移",
-  workspace: "/path/to/project",
-  max_turns: 10,                // 可选，默认 10
-  timeout_seconds_per_turn: 600 // 可选，每轮超时
-})
+Round 1: exec cursor-agent → report result to user
+User: "looks good, now add tests"
+Round 2: exec cursor-agent --resume <chatId> "add tests" → report result
+User: "done"
 ```
 
-注意: 整个 loop 是一次 tool call，调用者的 LLM turn 全程阻塞。
+## Error Handling
 
-### `workspace_diff` — 工作区变更
+### Common errors
 
-```
-workspace_diff({ workspace: "/path/to/project" })
-```
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `401` / `Unauthorized` | Invalid or missing API key | Verify `CURSOR_API_KEY`; ask user for a valid key |
+| `Workspace Trust Required` | Missing `--trust` flag | Add `--trust` to the command |
+| Process hangs indefinitely | Using TUI mode instead of `-p` | Always use `-p` for non-interactive invocations |
+| Process hangs on input | stdin not set to ignore | When using `exec`/`spawn`, set stdin to `ignore` or `/dev/null` |
 
-## 使用模式
+### Timeout strategy
 
-### 模式 1: 手动循环（推荐用于复杂任务）
+For long-running tasks, guard against hangs:
 
-Agent 自己控制每一步，可以在轮次之间分析结果、发通知、调整策略:
-
-1. 调用 `run_code_agent(prompt: "创建实施计划")` → 拿到 plan
-2. 分析 plan，拆解步骤
-3. 调用 `run_code_agent(prompt: "实施第一步: ...")` → 拿到结果
-4. 发飞书通知：第一步完成
-5. 调用 `run_code_agent(prompt: "实施第二步: ...")` → 继续
-6. 重复直到完成
-
-### 模式 2: 自动循环（适合简单批量任务）
-
-一次 tool call 完成所有轮次:
-
-```
-run_code_loop(goal: "重构 auth 模块，拆分为独立服务", max_turns: 5)
+```bash
+timeout 600 cursor-agent -p --force --trust "prompt"
 ```
 
-### 模式 3: 混合（推荐用于大型项目）
+If the process is killed by timeout, the exit code will be 124. Treat this as "task incomplete, may need to continue with --resume".
 
-1. 用 `run_code_agent` 做 plan
-2. 分析 plan 拆解为独立子任务
-3. 每个子任务用 `run_code_loop` 执行
+### Anti-patterns
 
-## 平台特定用法
+- **Do NOT** use `cursor` (TUI) or `opencode` (TUI) — these require a terminal and will hang without user input. Always use `cursor-agent -p` and `opencode run`.
+- **Do NOT** run cursor-agent in background and poll for results. Use synchronous execution (wait for process exit).
+- **Do NOT** pipe interactive input to cursor-agent. Set stdin to `ignore`. The `-p` flag makes it non-interactive.
+- **Do NOT** use heartbeat/event chains to detect process completion. Process exit is the only signal you need.
 
-### OpenClaw（有 subAgent）
+## Practical Tips
 
-将编码循环放入 subAgent，主 agent 保持响应:
-
-1. 主 agent: `sessions_spawn(task: "用 cursor 完成产品 A", timeout: 3600)`
-2. subAgent: 多次调用 `run_code_agent`，每轮之间发飞书通知
-3. subAgent 完成 → announce 推送结果到主 agent
-4. 主 agent 通知人类
-
-关键: subAgent 的 `runTimeoutSeconds` 必须 >= 编码循环总时长（建议 3600+）。
-
-### DeskClaw / nanobot（单 agent）
-
-nanobot 没有 subAgent 机制，调用 `run_code_agent` 或 `run_code_loop` 时 agent 会被阻塞。
-
-适合的场景：
-- 用户明确下达编码任务后不需要交互（如"晚上睡觉前让你做完"）
-- 使用 `run_code_loop` 一次性完成，减少 LLM 轮次
-
-推荐工作流：
-
-1. 用户下达目标
-2. Agent 调用 `run_code_loop(goal: "...", max_turns: 8)` — agent 全程阻塞
-3. loop 结束后 agent 恢复，向用户报告结果
-
-如果任务复杂需要中途调整，用模式 1（手动循环），每轮之间 agent 可以分析结果并决定下一步，但每轮期间仍然阻塞。
-
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `CURSOR_API_KEY` | (空) | **cursor 必填**。API Key，无需浏览器登录 |
-| `CURSOR_AGENT_BIN` | `cursor-agent` | cursor-agent 可执行文件路径 |
-| `OPENCODE_BIN` | `opencode` | opencode 可执行文件路径 |
-| `CURSOR_MODEL` | (空) | cursor 默认模型 |
-| `OPENCODE_MODEL` | (空) | opencode 默认模型 |
-| `SESSION_STORE_PATH` | `./data/sessions.json` | session 持久化文件路径 |
+- **Check workspace changes**: `git diff HEAD` in the workspace directory after each round.
+- **Parallel agents**: run multiple cursor-agent instances with different chatIds in separate subAgents.
+- **Model selection**: `--model sonnet-4-thinking` for complex tasks, cheaper models for routine work.
+- **Worktrees for isolation**: `cursor-agent -p -w feature-branch --worktree-base main "implement feature"` to work in an isolated git worktree without affecting the main working directory.
+- **Read-only analysis**: `cursor-agent -p --mode plan --trust --workspace /path "analyze this project"` to get analysis without any file modifications.
