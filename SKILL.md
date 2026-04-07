@@ -1,6 +1,6 @@
 ---
 name: codebridge-mcp
-description: MCP server that lets any agent synchronously invoke coding CLIs (cursor-agent, opencode). Provides run_code_agent (single turn) and run_code_loop (autonomous multi-turn) tools.
+description: MCP server that lets any agent synchronously invoke coding CLIs (cursor-agent, opencode). Provides check_auth, run_code_agent (single turn) and run_code_loop (autonomous multi-turn) tools.
 ---
 
 # CodeBridge MCP
@@ -16,11 +16,24 @@ npm install
 
 详细的安装和接入指南见 [README.md](README.md)。
 
-## 接入
+## 认证（首次使用前必读）
 
-### OpenClaw
+cursor-agent 需要认证才能使用。**不需要浏览器登录**，通过 API Key 即可。
 
-在 `~/.openclaw/openclaw.json` 的 `mcp.servers` 下添加 `codebridge` 条目：
+### 认证流程（Agent 必须遵循）
+
+1. **首次调用任何工具前**，先调用 `check_auth({ provider: "cursor" })`
+2. 如果返回 `authenticated: false`：
+   - 检查 MCP 配置中是否设置了 `CURSOR_API_KEY` 环境变量
+   - 如果没有，**向用户索要** Cursor API Key
+   - 用户可以从 Cursor Settings > API Keys 获取，或运行 `cursor-agent login` 后查看
+   - 拿到 key 后，将其写入 MCP 配置的 `env.CURSOR_API_KEY` 字段
+   - 提示用户重启 agent 以加载新配置
+3. 如果返回 `authenticated: true`，可以正常调用 `run_code_agent` / `run_code_loop`
+
+### 配置示例（带 API Key）
+
+OpenClaw (`~/.openclaw/openclaw.json` → `mcp.servers`):
 
 ```json
 {
@@ -28,6 +41,7 @@ npm install
     "command": "node",
     "args": ["/path/to/codebridge-mcp/src/server.js"],
     "env": {
+      "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
       "CURSOR_AGENT_BIN": "cursor-agent",
       "OPENCODE_BIN": "opencode"
     }
@@ -35,9 +49,7 @@ npm install
 }
 ```
 
-### DeskClaw (nanobot)
-
-在 `~/.deskclaw/nanobot/config.json` 的 `tools.mcp_servers` 下添加 `codebridge` 条目：
+DeskClaw (`~/.deskclaw/nanobot/config.json` → `tools.mcp_servers`):
 
 ```json
 {
@@ -46,6 +58,7 @@ npm install
     "command": "node",
     "args": ["/path/to/codebridge-mcp/src/server.js"],
     "env": {
+      "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
       "CURSOR_AGENT_BIN": "cursor-agent",
       "OPENCODE_BIN": "opencode"
     },
@@ -55,9 +68,18 @@ npm install
 }
 ```
 
-nanobot 与 OpenClaw 的差异：必须指定 `"type": "stdio"`；建议 `tool_timeout` 设为 660（略大于默认的 600s 任务超时）。
-
 ## 可用工具
+
+### `check_auth` — 认证检查
+
+在调用 run_code_agent / run_code_loop 之前**必须**先调用此工具。
+
+```
+check_auth({ provider: "cursor" })
+```
+
+返回 `{ authenticated: true, models: "..." }` 或 `{ authenticated: false, error: "..." }`。
+error 中会包含修复指引，Agent 应按指引操作。
 
 ### `run_code_agent` — 单轮同步执行
 
@@ -174,6 +196,7 @@ nanobot 没有 subAgent 机制，调用 `run_code_agent` 或 `run_code_loop` 时
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
+| `CURSOR_API_KEY` | (空) | **cursor 必填**。API Key，无需浏览器登录 |
 | `CURSOR_AGENT_BIN` | `cursor-agent` | cursor-agent 可执行文件路径 |
 | `OPENCODE_BIN` | `opencode` | opencode 可执行文件路径 |
 | `CURSOR_MODEL` | (空) | cursor 默认模型 |

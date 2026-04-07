@@ -34,12 +34,58 @@ function setupTimeout(child, timeoutMs, killGraceMs) {
   return timer;
 }
 
+function cursorApiKeyArgs(config) {
+  if (config.cursorApiKey) return ["--api-key", config.cursorApiKey];
+  return [];
+}
+
+export async function checkCursorAuth(config) {
+  if (!config.cursorApiKey) {
+    return {
+      authenticated: false,
+      error:
+        "CURSOR_API_KEY is not set. " +
+        "Ask the user for their Cursor API key and add it to the MCP server's env configuration. " +
+        'You can obtain an API key from: cursor-agent login, or from Cursor Settings > API Keys. ' +
+        "Then set CURSOR_API_KEY in the codebridge MCP env block in your agent config file.",
+    };
+  }
+
+  try {
+    const child = spawn(
+      config.cursorAgentBin,
+      [...cursorApiKeyArgs(config), "--list-models"],
+      { env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => { stdout += c.toString("utf8"); });
+    child.stderr.on("data", (c) => { stderr += c.toString("utf8"); });
+
+    const exitCode = await collectExit(child);
+    if (exitCode !== 0) {
+      return {
+        authenticated: false,
+        error: `cursor-agent --list-models failed (exit ${exitCode}): ${safeTrim(stderr) || safeTrim(stdout)}`,
+      };
+    }
+    return { authenticated: true, models: safeTrim(stdout) };
+  } catch (err) {
+    return { authenticated: false, error: String(err.message || err) };
+  }
+}
+
 export async function createCursorChat(config, workspace) {
-  const child = spawn(config.cursorAgentBin, ["create-chat"], {
-    cwd: workspace,
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn(
+    config.cursorAgentBin,
+    [...cursorApiKeyArgs(config), "create-chat"],
+    {
+      cwd: workspace,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 
   let stdout = "";
   let stderr = "";
@@ -66,7 +112,11 @@ export async function createCursorChat(config, workspace) {
 
 async function runCursorTurn({ sessionId, prompt, config, workspace, timeoutMs }) {
   const chatId = sessionId || (await createCursorChat(config, workspace));
-  const args = ["-p", "--output-format", "text", "--force", "--resume", chatId];
+  const args = [
+    ...cursorApiKeyArgs(config),
+    "-p", "--output-format", "text", "--force", "--trust",
+    "--resume", chatId,
+  ];
   if (config.cursorModel) {
     args.push("--model", config.cursorModel);
   }

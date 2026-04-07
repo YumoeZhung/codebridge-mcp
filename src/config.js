@@ -2,6 +2,7 @@ export function loadConfig() {
   return {
     cursorAgentBin: process.env.CURSOR_AGENT_BIN || "cursor-agent",
     opencodeBin: process.env.OPENCODE_BIN || "opencode",
+    cursorApiKey: process.env.CURSOR_API_KEY || "",
     cursorModel: process.env.CURSOR_MODEL || "",
     opencodeModel: process.env.OPENCODE_MODEL || "",
     sessionStorePath:

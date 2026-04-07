@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadConfig } from "./config.js";
-import { runAgentTurn } from "./agent-runner.js";
+import { runAgentTurn, checkCursorAuth } from "./agent-runner.js";
 import {
   captureSnapshot,
   summarizeChanges,
@@ -23,8 +23,67 @@ const CONTINUE_PROMPT = [
 
 const server = new McpServer({
   name: "codebridge-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
+
+// ─── Tool 0: check_auth ────────────────────────────────────────────────
+
+server.tool(
+  "check_auth",
+  "Check whether the coding CLI (cursor-agent / opencode) is properly authenticated. " +
+    "ALWAYS call this before your first run_code_agent or run_code_loop call. " +
+    "If authentication fails, the response will tell you exactly what to do " +
+    "(e.g. ask the user for a CURSOR_API_KEY and add it to the MCP env config).",
+  {
+    provider: z
+      .enum(["cursor", "opencode"])
+      .describe("Which CLI to check authentication for"),
+  },
+  async (params) => {
+    if (params.provider === "cursor") {
+      const result = await checkCursorAuth(config);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: !result.authenticated,
+      };
+    }
+
+    // opencode: just verify binary exists
+    try {
+      const { spawn } = await import("node:child_process");
+      const child = spawn(config.opencodeBin, ["--version"], {
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      child.stdout.on("data", (c) => { stdout += c.toString("utf8"); });
+      const exitCode = await new Promise((res, rej) => {
+        child.on("error", rej);
+        child.on("close", res);
+      });
+      if (exitCode === 0) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ authenticated: true, version: stdout.trim() }, null, 2) }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({ authenticated: false, error: `opencode exited with code ${exitCode}` }, null, 2) }],
+        isError: true,
+      };
+    } catch (err) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            authenticated: false,
+            error: `Cannot run opencode: ${err.message}. Make sure OPENCODE_BIN points to a valid binary.`,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+  },
+);
 
 // ─── Tool 1: run_code_agent ────────────────────────────────────────────
 
@@ -32,7 +91,9 @@ server.tool(
   "run_code_agent",
   "Run a single turn of a coding agent (cursor-agent or opencode). " +
     "Blocks until the CLI process exits, then returns the full output. " +
-    "Use session_id from a previous call to continue the same conversation.",
+    "Use session_id from a previous call to continue the same conversation. " +
+    "IMPORTANT: Call check_auth first to verify the CLI is authenticated. " +
+    "For cursor, CURSOR_API_KEY must be set in the MCP server env config.",
   {
     provider: z.enum(["cursor", "opencode"]).describe("Which coding CLI to use"),
     prompt: z.string().describe("The instruction to send to the coding agent"),
@@ -126,7 +187,8 @@ server.tool(
   "Run an autonomous coding loop: sends a goal to a coding agent, " +
     "then continues sending follow-up prompts until the agent signals TASK_COMPLETE " +
     "or max_turns is reached. Each turn blocks until the CLI exits. " +
-    "WARNING: This single tool call blocks for the entire loop duration.",
+    "WARNING: This single tool call blocks for the entire loop duration. " +
+    "IMPORTANT: Call check_auth first to verify the CLI is authenticated.",
   {
     provider: z.enum(["cursor", "opencode"]).describe("Which coding CLI to use"),
     goal: z.string().describe("High-level goal for the coding agent"),

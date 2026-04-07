@@ -8,12 +8,27 @@ MCP server，让任何 AI agent 同步调用 coding CLI（cursor-agent、opencod
 - 至少安装了以下 CLI 之一：
   - `cursor-agent`（Cursor 的 CLI 模式）
   - `opencode`（OpenCode CLI）
+- **cursor-agent 需要 API Key**（不需要浏览器登录）
 
 验证 CLI 是否可用：
 
 ```bash
 cursor-agent --version   # 或你的自定义路径
 opencode --version
+```
+
+### 获取 Cursor API Key
+
+cursor-agent 通过 `CURSOR_API_KEY` 环境变量认证，无需浏览器登录。获取方式：
+
+1. 在已登录 Cursor 的机器上运行 `cursor-agent status` 查看账号信息
+2. 或从 Cursor Settings > API Keys 生成
+3. 将 key 添加到 MCP 配置的 `env.CURSOR_API_KEY` 字段
+
+验证 key 有效：
+
+```bash
+CURSOR_API_KEY=key_xxx cursor-agent -p --trust --force "echo hello"
 ```
 
 ## 安装
@@ -45,6 +60,7 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
     "command": "node",
     "args": ["/Users/nodeskai/projects/codebridge-mcp/src/server.js"],
     "env": {
+      "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
       "CURSOR_AGENT_BIN": "cursor-agent",
       "OPENCODE_BIN": "opencode"
     }
@@ -57,8 +73,9 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
 1. 读取 `~/.openclaw/openclaw.json`
 2. 解析 JSON，定位 `mcp.servers` 字段（不存在则创建）
 3. 在 `mcp.servers` 下添加上面的 `codebridge` 条目
-4. 写回文件（保持其他字段不变）
-5. 重启 openclaw 让配置生效（或等待下次 agent run 自动加载）
+4. **`CURSOR_API_KEY` 必须填入有效的 key**。如果用户未提供，向用户索要
+5. 写回文件（保持其他字段不变）
+6. 重启 openclaw 让配置生效（或等待下次 agent run 自动加载）
 
 如果 `CURSOR_AGENT_BIN` 或 `OPENCODE_BIN` 不在 PATH 中，将值改为绝对路径，例如 `/usr/local/bin/cursor-agent`。
 
@@ -75,6 +92,7 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
     "command": "node",
     "args": ["/path/to/codebridge-mcp/src/server.js"],
     "env": {
+      "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
       "CURSOR_AGENT_BIN": "cursor-agent",
       "OPENCODE_BIN": "opencode"
     },
@@ -90,9 +108,10 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
 2. 解析 JSON，定位 `tools.mcp_servers` 字段（不存在则创建 `tools`，再在其中创建 `mcp_servers`）
 3. 在 `tools.mcp_servers` 下添加上面的 `codebridge` 条目
 4. 将 `args` 中的路径改为本机 codebridge-mcp 实际安装路径
-5. 如果 `cursor-agent` 或 `opencode` 不在 PATH 中，将 `env` 中的值改为绝对路径
-6. 写回文件（保持其他字段不变）
-7. 重启 DeskClaw 让配置生效
+5. **`CURSOR_API_KEY` 必须填入有效的 key**。如果用户未提供，向用户索要
+6. 如果 `cursor-agent` 或 `opencode` 不在 PATH 中，将 `env` 中的值改为绝对路径
+7. 写回文件（保持其他字段不变）
+8. 重启 DeskClaw 让配置生效
 
 与 OpenClaw 的关键差异：
 - 配置路径：`~/.deskclaw/nanobot/config.json`（不是 `openclaw.json`）
@@ -113,6 +132,7 @@ CodeBridge 是标准 MCP server（stdio transport），任何支持 MCP 的 agen
       "command": "node",
       "args": ["/path/to/codebridge-mcp/src/server.js"],
       "env": {
+        "CURSOR_API_KEY": "key_xxxxxxxxxxxxxxxx",
         "CURSOR_AGENT_BIN": "cursor-agent",
         "OPENCODE_BIN": "opencode"
       }
@@ -131,7 +151,17 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 ## 工具列表
 
-安装后 agent 会获得以下三个 MCP 工具：
+安装后 agent 会获得以下四个 MCP 工具：
+
+### `check_auth`
+
+检查 coding CLI 是否已认证。**在第一次调用 run_code_agent / run_code_loop 之前必须调用**。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `provider` | `"cursor"` \| `"opencode"` | 是 | 检查哪个 CLI |
+
+返回 `{ authenticated: true/false, ... }`。失败时包含修复指引，Agent 应按指引操作（向用户索要 API Key 并配置）。
 
 ### `run_code_agent`
 
@@ -175,6 +205,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
+| `CURSOR_API_KEY` | (空) | **cursor 必填**。API Key，无需浏览器登录 |
 | `CURSOR_AGENT_BIN` | `cursor-agent` | cursor-agent 可执行文件路径 |
 | `OPENCODE_BIN` | `opencode` | opencode 可执行文件路径 |
 | `CURSOR_MODEL` | (空) | cursor 默认模型 |
