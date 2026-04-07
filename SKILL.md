@@ -13,10 +13,14 @@ Drive cursor-agent and opencode from any agent with shell access. No MCP server,
 
 Requires `CURSOR_API_KEY`. No browser login needed.
 
-Verify authentication:
+Verify authentication (both commands are non-interactive, print output and exit):
 
 ```bash
+# Quick check — lists models and exits (output may contain ANSI escape codes)
 CURSOR_API_KEY=key_xxx cursor-agent --list-models
+
+# End-to-end check — verifies full auth + agent pipeline, clean text output
+CURSOR_API_KEY=key_xxx cursor-agent -p --trust "reply with just the word OK"
 ```
 
 If `CURSOR_API_KEY` is not available in your environment, ask the user to provide one. The user can obtain it from Cursor Settings > API Keys, or by running `cursor-agent login` on a machine with a browser and then checking `cursor-agent status`.
@@ -126,7 +130,20 @@ sessions_spawn({
 
 **DeskClaw (nanobot):**
 
-Same `sessions_spawn` call. Ensure `agents.defaults.subagents` config allows sufficient timeout:
+Nanobot creates subAgents via the LLM `spawn` tool (not `sessions_spawn`). The subAgent runs asynchronously in the background — the main agent stays responsive. When the subAgent finishes, it announces the result back to the main agent, which summarizes it for the user.
+
+The main agent calls spawn like this:
+
+```
+spawn(
+  task: "Use cursor-agent to implement user registration for /path/to/project. \
+    Run cursor-agent -p with CURSOR_API_KEY=<key>. After each round, review \
+    the result and decide next steps. When all steps are complete, summarize what was done.",
+  label: "implement user registration"
+)
+```
+
+Recommended subAgent config in nanobot's config file:
 
 ```json
 {
@@ -134,14 +151,42 @@ Same `sessions_spawn` call. Ensure `agents.defaults.subagents` config allows suf
     "defaults": {
       "subagents": {
         "runTimeoutSeconds": 3600,
-        "maxSpawnDepth": 1
+        "maxSpawnDepth": 1,
+        "maxIterations": 200,
+        "failOnToolError": false
       }
     }
   }
 }
 ```
 
+- `runTimeoutSeconds: 3600` — total subAgent runtime (coding loops need ample time)
+- `maxSpawnDepth: 1` — no nested spawning
+- `maxIterations: 200` — max LLM iterations per subAgent (nanobot defaults to 15, far too low for coding loops)
+- `failOnToolError: false` — a non-zero cursor-agent exit (e.g. timeout) should not kill the subAgent (nanobot defaults to true)
+
+Note: `maxIterations` and `failOnToolError` are currently hardcoded in nanobot's `subagent.py` (`_run_subagent()`). They need to be made configurable or patched in source code.
+
+SubAgent available tools: `exec` (core — used to invoke cursor-agent), file read/write/edit, glob, grep, web_search, web_fetch.
+SubAgent unavailable tools: `spawn` (no nesting), `message`, `cron`, MCP tools.
+
+**Other agents:**
+
+If your platform is not OpenClaw or DeskClaw, check whether you have a subAgent / background task / spawn mechanism. If you do:
+
+1. Ensure the subAgent has access to a shell/exec tool (required to invoke cursor-agent).
+2. Adjust your platform's subAgent configuration (parameter names vary by platform):
+   - Max iterations per subAgent: **>= 200** (coding loops involve many LLM turns)
+   - Single tool execution timeout: **>= 600 seconds** (one cursor-agent run can take 10+ minutes)
+   - Total subAgent runtime timeout: **>= 3600 seconds**
+   - Tool execution errors should NOT immediately terminate the subAgent
+3. Follow the SubAgent internal loop pseudocode below.
+
+If your platform does not support subAgents, use Pattern 2 (Direct execution) instead. The agent will be blocked during cursor-agent execution but the workflow still works.
+
 **SubAgent internal loop (pseudocode):**
+
+Prerequisites: subAgent must be configured with sufficient iterations (>= 200) and timeout (>= 3600s). See platform-specific sections above.
 
 ```
 chatId = exec("cursor-agent create-chat")
